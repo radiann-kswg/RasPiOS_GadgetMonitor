@@ -1,0 +1,13 @@
+[Unit]
+Description=USB Ethernet gadget (gadgetmon)
+After=systemd-modules-load.service sys-kernel-config.mount
+Requires=sys-kernel-config.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/gadgetmon/usb-gadget.sh start
+ExecStop=/opt/gadgetmon/usb-gadget.sh stop
+
+[Install]
+WantedBy=multi-user.target

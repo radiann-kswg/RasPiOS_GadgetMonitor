@@ -1,0 +1,16 @@
+[Unit]
+Description=GadgetMonitor telemetry renderer
+After=usb-gadget.service
+Wants=usb-gadget.service
+
+[Service]
+Type=simple
+Environment=SDL_VIDEODRIVER=kmsdrm
+ExecStart=/usr/bin/python3 /opt/gadgetmon/gadgetmon.py
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

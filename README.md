@@ -3,6 +3,9 @@
 Raspberry Pi **4B** をデスクトップPCの「稼働率モニターガジェット」にする
 オリジナルOSイメージ（pi-gen / arm64 / Debian trixie ベース）。
 
+> **License**: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.ja)
+> © ラジアン（柏木主税） / RadianN_kswg
+
 PCのUSBポートとPiのUSB-Cを1本のケーブルで接続すると、**給電とデータ通信を同時に**行い、
 PC側常駐エージェントが送るテレメトリ（CPU・メモリ・GPU・VRAM・ネットワーク・ディスクI/O、
 負荷や温度）を、HDMI接続のディスプレイへ**グレー基調の工学モニター風GUI**で常時表示する。
@@ -122,11 +125,34 @@ binfmtエラー時は `sudo update-binfmts --enable`。
 | CPU温度が `--` | Windows標準では取得不可。LibreHardwareMonitorLib.dll＋pythonnet導入後、タスクの引数へ `--lhm-dll` を追加 |
 | 画面が映らない | HDMI0（USB-C隣）ポートを使用。`config.txt` は `hdmi_force_hotplug=1` 設定済み |
 
-## クレジット / ライセンス
+## ライセンス
 
-- フォント **PenchantManufacture** および工業デカール配色仕様:
+本リポジトリの独自制作物（ビルド構成・スクリプト・GUIレンダラ・PCエージェント・
+ドキュメント・画面デザイン）は
+**[Creative Commons 表示 4.0 国際 (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/deed.ja)**
+で公開されています。ライセンス正文は [LICENSE](LICENSE) を参照してください。
+
+**著作者（ライセンス主）: ラジアン（柏木主税） / RadianN_kswg**
+
+利用時のクレジット表記例:
+
+```
+RasPiOS_GadgetMonitor by ラジアン（柏木主税） / RadianN_kswg
+CC BY 4.0 https://creativecommons.org/licenses/by/4.0/
+```
+
+### 同梱物・サードパーティ
+
+- フォント **PenchantManufacture**（`PenchantManufacture.otf` を同梱）および
+  工業デカール配色仕様:
   [PenchantManufacture_ImageAssets](https://github.com/radiann-kswg/PenchantManufacture_ImageAssets)
-  — © RadianN_kswg / ラジアン（柏木主税）、
-  [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.ja)。
-  本イメージは同フォント（`PenchantManufacture.otf`）を同梱する。
-- ビルド基盤: [pi-gen](https://github.com/RPi-Distro/pi-gen)（BSD 3-Clause）
+  — © ラジアン（柏木主税） / RadianN_kswg、CC BY 4.0（本リポジトリと同一著作者・同一ライセンス）。
+- ビルド基盤 [pi-gen](https://github.com/RPi-Distro/pi-gen)（BSD 3-Clause）は
+  **本リポジトリには含まれず**、ビルド時に `build-image.sh` が取得します。
+- ビルドで生成される **OSイメージには Raspberry Pi OS / Debian の
+  各パッケージが含まれ、それぞれのライセンス**（GPL ほか）に従います。
+  CC BY 4.0 が適用されるのは本リポジトリ収録の独自制作物のみです。
+
+### クレジット
+
+- **Claude（Anthropic）** — Cowork の Agent 機能による設計・実装・実機デバッグ支援。

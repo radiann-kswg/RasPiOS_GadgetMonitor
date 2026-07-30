@@ -614,6 +614,58 @@ class Renderer:
                        max(10, int(self.h * 0.024)), "nickel", align="center")
 
 
+class FbDisplay:
+    """/dev/fb0 直描画バックエンド（既定）。
+
+    Pi 4 の vc4 では SDL/KMSDRM のモード設定が成功しても映像信号に
+    描画内容が乗らない環境がある（実測）。カーネルコンソールと同じ
+    fbdev エミュレーション経由なら確実に表示されるため、オフスクリーンの
+    Surface に描画し、fbの画素形式(RGB565/XRGB8888)へ変換して書き込む。
+    """
+
+    def __init__(self, dev="/dev/fb0", sys_dir="/sys/class/graphics/fb0"):
+        with open(os.path.join(sys_dir, "virtual_size")) as f:
+            w, h = (int(v) for v in f.read().strip().split(","))
+        with open(os.path.join(sys_dir, "bits_per_pixel")) as f:
+            self.bpp = int(f.read().strip())
+        try:
+            with open(os.path.join(sys_dir, "stride")) as f:
+                self.stride = int(f.read().strip())
+        except OSError:
+            self.stride = w * self.bpp // 8
+        if self.bpp not in (16, 32):
+            raise SystemExit("unsupported fb depth: {}bpp".format(self.bpp))
+        self.size = (w, h)
+        self.fb = open(dev, "r+b", buffering=0)
+        self.surface = pygame.Surface((w, h))          # 描画用(32bit)
+        self.conv = pygame.Surface((w, h), 0, self.bpp)  # fb画素形式変換用
+        self._row = w * self.bpp // 8
+
+    def flip(self):
+        self.conv.blit(self.surface, (0, 0))
+        raw = self.conv.get_buffer().raw
+        pitch = self.conv.get_pitch()
+        if pitch == self._row and self.stride == self._row:
+            self.fb.seek(0)
+            self.fb.write(raw)
+        else:  # パディングあり: 行単位で書く
+            for y in range(self.size[1]):
+                self.fb.seek(y * self.stride)
+                self.fb.write(raw[y * pitch:y * pitch + self._row])
+
+
+class KmsDisplay:
+    """SDL/KMSDRM バックエンド（DISPLAY_BACKEND=kms 指定時のみ）。"""
+
+    def __init__(self):
+        os.environ.setdefault("SDL_VIDEODRIVER", "kmsdrm")
+        self.surface = open_display()
+        pygame.mouse.set_visible(False)
+
+    def flip(self):
+        pygame.display.flip()
+
+
 def _kmsdrm_candidates():
     """表示コネクタを持つDRMカードのインデックス候補を返す。
 
@@ -661,10 +713,17 @@ def open_display(retries=15, delay=2.0):
 
 
 def main():
-    os.environ.setdefault("SDL_VIDEODRIVER", "kmsdrm")
-    screen = open_display()
-    pygame.mouse.set_visible(False)
-    renderer = Renderer(screen)
+    conf = load_conf(CONF_PATH)
+    backend = (conf.get("DISPLAY_BACKEND", "fb") or "fb").strip().lower()
+    if backend == "kms":
+        disp = KmsDisplay()
+        pygame.font.init()
+    else:
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        pygame.display.init()
+        pygame.font.init()
+        disp = FbDisplay()
+    renderer = Renderer(disp.surface)
     mon = Monitor()
     clock = pygame.time.Clock()
     try:
@@ -674,7 +733,7 @@ def main():
                     return
             mon.poll()
             renderer.frame(mon)
-            pygame.display.flip()
+            disp.flip()
             clock.tick(15)
     except KeyboardInterrupt:
         pass

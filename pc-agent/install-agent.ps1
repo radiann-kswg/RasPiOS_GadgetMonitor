@@ -1,4 +1,4 @@
-# GadgetMonitor Windowsエージェント インストーラ
+﻿# GadgetMonitor Windowsエージェント インストーラ
 # 実行: PowerShell (通常権限) で
 #   powershell -ExecutionPolicy Bypass -File .\install-agent.ps1
 # 内容:
@@ -7,9 +7,9 @@
 #   3. ログオン時に自動起動するタスクスケジューラ登録 (pythonw = 無ウィンドウ)
 $ErrorActionPreference = "Stop"
 
-$SrcDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Dest    = Join-Path $env:LOCALAPPDATA "GadgetMonAgent"
-$Venv    = Join-Path $Dest "venv"
+$SrcDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Dest = Join-Path $env:LOCALAPPDATA "GadgetMonAgent"
+$Venv = Join-Path $Dest "venv"
 $TaskName = "GadgetMonAgent"
 
 Write-Host "[1/3] ファイル配置: $Dest"
@@ -25,16 +25,16 @@ if ($py) { & py -3 -m venv $Venv } else { & python -m venv $Venv }
 
 Write-Host "[3/3] タスクスケジューラ登録: $TaskName"
 $pythonw = Join-Path $Venv "Scripts\pythonw.exe"
-$agent   = Join-Path $Dest "gadgetmon_agent.py"
-$action  = New-ScheduledTaskAction -Execute $pythonw -Argument "`"$agent`""
+$agent = Join-Path $Dest "gadgetmon_agent.py"
+$action = New-ScheduledTaskAction -Execute $pythonw -Argument "`"$agent`""
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $settings = New-ScheduledTaskSettingsSet `
-    -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-    -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
-    -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
+	-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+	-RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
+	-ExecutionTimeLimit (New-TimeSpan -Seconds 0)
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
-    -Settings $settings -Description "GadgetMonitor telemetry agent" | Out-Null
+	-Settings $settings -Description "GadgetMonitor telemetry agent" | Out-Null
 Start-ScheduledTask -TaskName $TaskName
 
 Write-Host ""

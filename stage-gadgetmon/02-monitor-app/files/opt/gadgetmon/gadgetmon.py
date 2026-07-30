@@ -249,7 +249,7 @@ def fmt_rate(bps, bits=True):
     """転送レート整形。bits=True: bps基準(M/G), False: bytes基準(MB/s)。"""
     if bps is None:
         return "--"
-    unit = "B" if bits else "MB/S"
+    unit = "B" if bits else "MB/s"
     if bits:
         if bps >= 1e9:
             return "{:.2f}G".format(bps / 1e9)
@@ -260,7 +260,7 @@ def fmt_rate(bps, bits=True):
         return "{:.0f}".format(bps)
     mbs = bps / 1e6
     if mbs >= 1000:
-        return "{:.2f}GB/S".format(mbs / 1000)
+        return "{:.2f}GB/s".format(mbs / 1000)
     return "{:.1f}{}".format(mbs, unit)
 
 
@@ -272,8 +272,8 @@ def fmt_uptime(sec):
     hours, rem = divmod(rem, 3600)
     mins = rem // 60
     if days:
-        return "UP {}D {:02d}:{:02d}".format(days, hours, mins)
-    return "UP {:02d}:{:02d}".format(hours, mins)
+        return "Up {}d {:02d}:{:02d}".format(days, hours, mins)
+    return "Up {:02d}:{:02d}".format(hours, mins)
 
 
 # --- 本体 -----------------------------------------------------------------------
@@ -420,10 +420,10 @@ class Renderer:
 
         big = int(rect.h * 0.42)
         small = max(10, int(rect.h * 0.20))
-        blit_decal(scr, "DESKTOP TELEMETRY", (rect.x + m, rect.y + int(rect.h * 0.10)),
+        blit_decal(scr, "Desktop Telemetry", (rect.x + m, rect.y + int(rect.h * 0.10)),
                    big, "nickel")
         d = mon.data or {}
-        host = str(d.get("host") or "UNKNOWN HOST").upper()[:24]
+        host = str(d.get("host") or "Unknown Host")[:24]
         sub = host + "  " + fmt_uptime(d.get("uptime_s"))
         blit_decal(scr, sub, (rect.x + m, rect.y + int(rect.h * 0.60)),
                    small, "nickel")
@@ -435,9 +435,9 @@ class Renderer:
             text = "--:--:--"
         blit_decal(scr, text, (rect.right - m, rect.y + int(rect.h * 0.10)),
                    big, "nickel", align="right")
-        status = "SIGNAL LOST" if lost else ("ALERT" if warns["any"] else "NOMINAL")
+        status = "SIGNAL LOST" if lost else ("ALERT" if warns["any"] else "Nominal")
         scheme = "hazard" if (lost or warns["any"]) else "nickel"
-        blit_decal(scr, "STATUS " + status, (rect.right - m, rect.y + int(rect.h * 0.60)),
+        blit_decal(scr, "Status " + status, (rect.right - m, rect.y + int(rect.h * 0.60)),
                    small, scheme, align="right")
 
     # -- カード群 --
@@ -457,11 +457,11 @@ class Renderer:
         dsk = d.get("disk") or {}
         cards = [
             ("CPU", self._card_cpu, cpu, warns["cpu"]),
-            ("MEMORY", self._card_mem, mem, warns["mem"]),
+            ("Memory", self._card_mem, mem, warns["mem"]),
             ("GPU", self._card_gpu, gpu, warns["gpu"]),
             ("VRAM", self._card_vram, gpu, warns["vram"]),
-            ("NETWORK", self._card_net, net, warns["net"]),
-            ("DISK I/O", self._card_disk, dsk, warns["disk"]),
+            ("Network", self._card_net, net, warns["net"]),
+            ("Disk I/O", self._card_disk, dsk, warns["disk"]),
         ]
         for idx, (title, fn, src, warn) in enumerate(cards):
             cx = idx % cols
@@ -502,7 +502,7 @@ class Renderer:
         temp = cpu.get("temp_c")
         freq = cpu.get("freq_mhz")
         sub = "{}  {}".format(
-            fmt_num(freq / 1000.0, "{:.1f}GHZ") if freq else "--GHZ",
+            fmt_num(freq / 1000.0, "{:.1f}GHz") if freq else "--GHz",
             fmt_num(temp, "{:.0f}C"))
         graph = self._value_row(rect, fmt_num(util, "{:.0f}%"), sub, warn)
         cores = cpu.get("per_core") or []
@@ -541,7 +541,7 @@ class Renderer:
     def _card_gpu(self, mon, rect, gpu, warn):
         util = gpu.get("util")
         temp = gpu.get("temp_c")
-        name = str(gpu.get("name") or "")[:20].upper()
+        name = str(gpu.get("name") or "")[:20]
         sub = "{}  {}".format(fmt_num(temp, "{:.0f}C"), name or "--")
         graph = self._value_row(rect, fmt_num(util, "{:.0f}%"), sub, warn)
         draw_graph(self.screen, graph, [(mon.hist["gpu"], True)],
@@ -566,8 +566,8 @@ class Renderer:
     def _card_net(self, mon, rect, net, warn):
         dn = net.get("down_bps")
         up = net.get("up_bps")
-        sub = "UP {}  DN {}".format(fmt_rate(up), fmt_rate(dn))
-        graph = self._value_row(rect, "DN " + fmt_rate(dn), sub, warn)
+        sub = "Up {}  Dn {}".format(fmt_rate(up), fmt_rate(dn))
+        graph = self._value_row(rect, "Dn " + fmt_rate(dn), sub, warn)
         draw_graph(self.screen, graph,
                    [(mon.hist["net_up"], False), (mon.hist["net_dn"], True)],
                    warn=warn)
@@ -575,9 +575,9 @@ class Renderer:
     def _card_disk(self, mon, rect, dsk, warn):
         rd = dsk.get("read_bps")
         wr = dsk.get("write_bps")
-        sub = "RD {}  WR {}".format(fmt_rate(rd, bits=False),
+        sub = "Rd {}  Wr {}".format(fmt_rate(rd, bits=False),
                                     fmt_rate(wr, bits=False))
-        graph = self._value_row(rect, "RD " + fmt_rate(rd, bits=False), sub, warn)
+        graph = self._value_row(rect, "Rd " + fmt_rate(rd, bits=False), sub, warn)
         draw_graph(self.screen, graph,
                    [(mon.hist["dsk_wr"], False), (mon.hist["dsk_rd"], True)],
                    warn=warn)
@@ -599,17 +599,17 @@ class Renderer:
             pygame.draw.rect(scr, HAZARD_BOT if not never else SLATE, strip)
             if not never:
                 draw_stripes(scr, strip, period=20, width=4, color=STRIPE_BK)
-        title = "WAITING FOR HOST" if never else "SIGNAL LOST"
+        title = "Waiting for Host" if never else "SIGNAL LOST"
         scheme = "nickel" if never else "hazard"
         if blink or never:
             blit_decal(scr, title, (self.w // 2, cy - int(self.h * 0.085)),
                        int(self.h * 0.09), scheme, align="center")
-        hint = ("CONNECT USB-C TO PC AND START AGENT" if never
-                else "CHECK USB LINK AND PC AGENT")
+        hint = ("Connect USB-C to PC and start the agent" if never
+                else "Check USB link and PC agent")
         blit_decal(scr, hint, (self.w // 2, cy + int(self.h * 0.035)),
                    max(11, int(self.h * 0.030)), "nickel", align="center")
         if not never:
-            blit_decal(scr, "LAST PACKET {:.0f}S AGO".format(stale),
+            blit_decal(scr, "Last packet {:.0f}s ago".format(stale),
                        (self.w // 2, cy + int(self.h * 0.085)),
                        max(10, int(self.h * 0.024)), "nickel", align="center")
 

@@ -13,6 +13,7 @@ DRM/KMS 上の pygame でグレー基調の工学モニター風GUIを描画す�
 (c) RadianN_kswg / ラジアン(柏木主税))
 """
 
+import glob
 import json
 import os
 import socket
@@ -613,18 +614,49 @@ class Renderer:
                        max(10, int(self.h * 0.024)), "nickel", align="center")
 
 
+def _kmsdrm_candidates():
+    """表示コネクタを持つDRMカードのインデックス候補を返す。
+
+    Pi 4 では card0=v3d(3Dレンダラのみ・出力なし) / card1=vc4(HDMI出力) の
+    2デバイス構成になることがあり、SDLの既定(index 0)では画面を開けない。
+    コネクタが connected のカードを最優先し、コネクタ持ち → 残り の順に試す。
+    """
+    connected, with_conn, rest = [], [], []
+    try:
+        for path in sorted(glob.glob("/sys/class/drm/card[0-9]")):
+            idx = int(os.path.basename(path)[4:])
+            statuses = []
+            for st in glob.glob("/sys/class/drm/card{}-*/status".format(idx)):
+                try:
+                    with open(st) as f:
+                        statuses.append(f.read().strip())
+                except OSError:
+                    pass
+            if "connected" in statuses:
+                connected.append(idx)
+            elif statuses:
+                with_conn.append(idx)
+            else:
+                rest.append(idx)
+    except (OSError, ValueError):
+        pass
+    return (connected + with_conn + rest) or [0, 1]
+
+
 def open_display(retries=15, delay=2.0):
     last_err = None
     for _ in range(retries):
-        try:
-            pygame.display.init()
-            pygame.font.init()
-            screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-            return screen
-        except pygame.error as exc:
-            last_err = exc
-            pygame.display.quit()
-            time.sleep(delay)
+        for idx in _kmsdrm_candidates():
+            os.environ["SDL_KMSDRM_DEVICE_INDEX"] = str(idx)
+            try:
+                pygame.display.init()
+                pygame.font.init()
+                screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+                return screen
+            except pygame.error as exc:
+                last_err = exc
+                pygame.display.quit()
+        time.sleep(delay)
     raise SystemExit("display init failed: {}".format(last_err))
 
 

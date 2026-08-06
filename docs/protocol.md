@@ -54,9 +54,9 @@ UDPを採用する理由: 表示用途では最新値のみが意味を持ち、
 | `cpu.util` | float | % | 全コア平均 |
 | `cpu.per_core` | float[] | % | 論理コアごと。省略可 |
 | `cpu.freq_mhz` | float | MHz | 現在クロック |
-| `cpu.temp_c` | float/null | ℃ | 取得不能時は null（表示は `--`） |
+| `cpu.temp_c` | float/null | ℃ | パッケージ温度。LibreHardwareMonitorLib由来（[temperature.md](temperature.md)）。取得不能時は null（表示は `--C`） |
 | `mem.used` / `mem.total` | int | bytes | used は total - available |
-| `gpu.*` | - | - | NVML由来。GPU無し/取得失敗時は `{}` |
+| `gpu.*` | - | - | NVML由来。GPU無し/取得失敗時は `{}`。非NVIDIA GPUではLibreHardwareMonitorLibから `temp_c` のみ入ることがある |
 | `gpu.vram_used` / `vram_total` | int | bytes | |
 | `gpu.power_w` | float/null | W | |
 | `net.up_bps` / `down_bps` | float | **bit/s** | 全NIC合算。表示はMbps系 |

@@ -17,6 +17,17 @@ PC側常駐エージェントが送るテレメトリ（CPU・メモリ・GPU・
 └──────────────┘                                     └─────────────┘          └─────────┘
 ```
 
+## 対応ハードウェア
+
+- **Raspberry Pi 4B**（主対象・実機検証済み。arm64・64bitイメージ）
+- USB-C は給電＋USBガジェットEthernetで占有する。USBメディアからの起動と併用しないこと
+- HDMI は本体の **HDMI0**（USB-C 電源端子に近い側）を使う
+- 画面描画は `/dev/fb0` 直描画（`DISPLAY_BACKEND=fb` 既定）。Pi 4 の `kmsdrm` 経路は
+  モード設定に成功しても映像が出ない事象を実機で確認済み
+
+1台の Pi 4B を本プロジェクトの他イメージ（DigitalSignage / UnityConsole）と切り換えて使う手順は
+[../docs/pi4b-image-switching.md](../docs/pi4b-image-switching.md) を参照。
+
 ## 表示デザイン
 
 書体・配色は [PenchantManufacture_ImageAssets](https://github.com/radiann-kswg/PenchantManufacture_ImageAssets)
@@ -46,10 +57,13 @@ RasPiOS_GadgetMonitor/
 │   ├── 00-install-packages/    #   python3-pygame / dnsmasq
 │   ├── 01-usb-gadget/          #   USB Ethernetガジェット(configfs)＋DHCP＋設定ファイル
 │   ├── 02-monitor-app/         #   レンダラ(gadgetmon.py)＋フォント＋サービス
+│   │                           #   ＋ブート経由更新(apply-boot-update.sh)
 │   ├── 03-boot-config/         #   dwc2有効化・HDMI・静音起動
 │   └── 04-purge-cloud-init/    #   cloud-init除去（最後に置く）
 ├── pc-agent/                   # Windows側エージェント一式
-└── docs/protocol.md            # UDP/JSONテレメトリ仕様
+└── docs/
+    ├── protocol.md             # UDP/JSONテレメトリ仕様
+    └── temperature.md          # 温度モニタリングの仕組みと診断手順
 ```
 
 ## ビルド（WSL2想定）
@@ -82,7 +96,75 @@ binfmtエラー時は `sudo update-binfmts --enable`。
    powershell -ExecutionPolicy Bypass -File .\install-agent.ps1
    ```
    （Python 3 が必要。ログオン時自動起動のタスク `GadgetMonAgent` が登録される）
+   CPU温度の取得にはカーネルドライバが要るため、途中でUACの昇格確認が出る。
+   温度が不要なら `-NoCpuTemp` を付ける。
 5. 数秒でテレメトリ表示が始まる。
+6. 表示が想定どおりか確認する:
+   ```powershell
+   & "$env:LOCALAPPDATA\GadgetMonAgent\venv\Scripts\python.exe" `
+     "$env:LOCALAPPDATA\GadgetMonAgent\gadgetmon_agent.py" --selftest
+   ```
+
+## 温度モニタリング
+
+- **CPU温度** — Windows に標準APIが無いため、LibreHardwareMonitorLib（MPL-2.0、
+  GitHub公式リリースの net472 配布物をインストーラが取得）を pythonnet 経由で使う。
+  読み出しにカーネルドライバが要るので、タスクは「最上位の特権」で登録される。
+  **メモリ整合性（コア分離）が有効な環境では取得できない**（`WinRing0` が
+  脆弱ドライバブロックリスト対象のため）。不要なら `-NoCpuTemp` で導入する。
+- **GPU温度** — NVIDIA は NVML（権限不要）。AMD/Intel は LibreHardwareMonitorLib から取得。
+- **Pi自身のSoC温度** — ヘッダ左に `Pi 52C` として常時表示（`SHOW_PI_TEMP=0` で非表示）。
+- CPU/GPUカードのグラフは主線＝使用率[%]、副線（淡白）＝温度[℃]を 0〜100 の
+  同一目盛に重ねて描く。補足行は `62C max78`（観測期間中の最高値）。
+  温度がしきい値を超えるとカードと補足行が警戒配色になる。
+- **取得できない温度は項目ごと表示しない**（`--C` を出し続けても情報量が無いため）。
+  センサが無い環境ではCPUカードの補足行はクロックだけになる。
+
+仕組み・診断手順・ライセンスは [docs/temperature.md](docs/temperature.md) を参照。
+
+## Pi側レンダラだけを差し替える
+
+イメージを焼き直さずに `gadgetmon.py` を更新する方法は2つ。
+
+### A. ブートパーティション経由（SSH不要・推奨）
+
+ブートパーティションは **FAT なので Windows からそのまま見える**。ここに
+`gadgetmon.py` を置いて再起動すると、`gadgetmon.service` の `ExecStartPre`
+（[apply-boot-update.sh](stage-gadgetmon/02-monitor-app/files/opt/gadgetmon/apply-boot-update.sh)）
+が rootfs 側へ取り込む。SSHもキーボードも要らない。
+
+1. Piの電源を落とし、SDカードをPCに挿す（またはPiを起動したままなら次回起動時に反映）
+2. ブートパーティション（`bootfs`）へ `gadgetmon.py` をコピー
+3. SDカードをPiへ戻して起動
+
+| ブートパーティション上のファイル | 役割 |
+| --- | --- |
+| `gadgetmon.py` | 置くと次回起動時に `/opt/gadgetmon/gadgetmon.py` へ取り込む |
+| `gadgetmon-update.log` | 取り込み結果。拒否された場合は理由（構文エラー等）も記録される |
+| `gadgetmon-rollback` | 空ファイルを置いて再起動すると直前の版（`.bak`）へ戻す |
+
+安全策として、**Pythonの構文チェックを通ったものだけ**を適用し、差し替え前の版を
+`/opt/gadgetmon/gadgetmon.py.bak` に残す。同じ内容なら何もしない。
+`gadgetmon.conf` の `BOOT_UPDATE=0` で機能ごと無効化できる。
+
+> **注意:** この仕組みは「ブートパーティションに書ける ＝ Pi 上で root として
+> 任意のコードを実行できる」ことを意味する。SDカードを物理的に扱える人には
+> どのみち rootfs も書けるため実質的な差は小さいが、共有環境に置くなど
+> 気になる用途では `BOOT_UPDATE=0` にすること。
+
+### B. SSH経由
+
+```powershell
+scp -O stage-gadgetmon/02-monitor-app/files/opt/gadgetmon/gadgetmon.py gadget@10.87.0.1:/tmp/
+ssh -t gadget@10.87.0.1 "sudo install -m 755 /tmp/gadgetmon.py /opt/gadgetmon/gadgetmon.py && sudo systemctl restart gadgetmon"
+```
+
+ユーザ名・パスワードは `config` の `FIRST_USER_NAME` / `FIRST_USER_PASS`
+（既定 `gadget` / `gadget`）。
+
+- **`ssh -t` の `-t` は必須。** 付けないと擬似端末が割り当てられず、
+  `sudo: パスワードを読み取るために端末が必要です` で失敗する。
+- `scp` が `Connection closed` になる場合は `-O`（旧SCPプロトコル）を付ける。
 
 ## 給電に関する注意（重要）
 
@@ -113,6 +195,8 @@ binfmtエラー時は `sudo update-binfmts --enable`。
 | `PI_IP` / `PI_PREFIX` | `10.87.0.1` / `24` | Pi側アドレス（変更時は `/etc/dnsmasq.d/usb0.conf` も揃える） |
 | `LISTEN_PORT` | `8787` | テレメトリ受信ポート |
 | `STALE_SEC` | `5` | この秒数無受信で SIGNAL LOST 表示 |
+| `SHOW_PI_TEMP` | `1` | ヘッダにPi自身のSoC温度を表示（`0`で非表示） |
+| `BOOT_UPDATE` | `1` | ブートパーティションに置いた `gadgetmon.py` を起動時に取り込む（`0`で無効） |
 | `WARN_*` | 各種 | 警戒色しきい値。空で無効（docs/protocol.md 参照） |
 
 ## トラブルシュート
@@ -122,7 +206,8 @@ binfmtエラー時は `sudo update-binfmts --enable`。
 | PCがネットワークデバイスを認識しない | `gadgetmon.conf` で `USB_FUNCTION=rndis` に変更して再起動（Windows 10 初期版等） |
 | 充電専用ケーブルで通信不可 | データ線入りのUSB-Cケーブルへ交換 |
 | WAITING FOR HOST のまま | PC側タスク `GadgetMonAgent` の起動確認、`ping 10.87.0.1`、ファイアウォールの送信UDP許可 |
-| CPU温度が `--` | Windows標準では取得不可。LibreHardwareMonitorLib.dll＋pythonnet導入後、タスクの引数へ `--lhm-dll` を追加 |
+| CPU温度が `--C` | まず`install-agent.ps1` を**管理者権限**で再実行。それでも駄目なら**メモリ整合性(コア分離)が有効**で `WinRing0` ドライバが遮断されている可能性大 → [docs/temperature.md](docs/temperature.md) |
+| SSHが `Permission denied` | 初期ユーザ/パスワードは `config` の `FIRST_USER_NAME` / `FIRST_USER_PASS`（既定 `gadget` / `gadget`）。SDカードを差し替えて WSL2 の `wsl --mount` で rootfs を直接編集する手もある |
 | 画面が映らない | HDMI0（USB-C隣）ポートを使用。`config.txt` は `hdmi_force_hotplug=1` 設定済み |
 
 ## ライセンス
@@ -149,6 +234,11 @@ CC BY 4.0 https://creativecommons.org/licenses/by/4.0/
   — © ラジアン（柏木主税） / RadianN_kswg、CC BY 4.0（本リポジトリと同一著作者・同一ライセンス）。
 - ビルド基盤 [pi-gen](https://github.com/RPi-Distro/pi-gen)（BSD 3-Clause）は
   **本リポジトリには含まれず**、ビルド時に `build-image.sh` が取得します。
+- CPU温度取得に使う
+  [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor)（MPL-2.0）
+  の net472 版配布物（`LibreHardwareMonitorLib.dll` と同梱の依存アセンブリ。
+  HidSharp ほかそれぞれのライセンスに従います）は **本リポジトリには含まれず**、
+  `pc-agent/install-agent.ps1` が GitHub の公式リリースから取得します。
 - ビルドで生成される **OSイメージには Raspberry Pi OS / Debian の
   各パッケージが含まれ、それぞれのライセンス**（GPL ほか）に従います。
   CC BY 4.0 が適用されるのは本リポジトリ収録の独自制作物のみです。

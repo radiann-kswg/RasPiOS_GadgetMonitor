@@ -25,6 +25,9 @@ import pygame
 CONF_PATH = "/boot/firmware/gadgetmon.conf"
 FONT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          "fonts", "PenchantManufacture.otf")
+# Pi 自身のSoC温度（ヘッダに小さく表示する。USB給電・ファンレス運用の目安）
+PI_TEMP_PATH = "/sys/class/thermal/thermal_zone0/temp"
+PI_TEMP_INTERVAL = 2.0  # sysfs読み出し間隔[秒]
 
 # --- 配色 (DECAL_VARIANTS.md 準拠) -----------------------------------------
 NICKEL_TOP = (0xCA, 0xCE, 0xD6)   # 白銅ボディ上端
@@ -206,7 +209,11 @@ def draw_bar(target, rect, ratio, warn):
 
 
 def draw_graph(target, rect, series_list, fixed_max=None, warn=False):
-    """折れ線グラフ。series_list: [(deque, is_primary), ...]"""
+    """折れ線グラフ。series_list: [(deque, is_primary), ...]
+
+    系列の要素が None の箇所は「値なし」として線を分断する
+    （温度センサが読めない区間を 0℃ と誤読させないため）。
+    """
     pygame.draw.rect(target, PANEL_DK, rect)
     for i in (1, 2, 3):
         y = rect.y + rect.h * i // 4
@@ -215,22 +222,30 @@ def draw_graph(target, rect, series_list, fixed_max=None, warn=False):
     if scale is None:
         peak = 0.0
         for series, _ in series_list:
-            if series:
-                peak = max(peak, max(series))
+            values = [v for v in series if v is not None]
+            if values:
+                peak = max(peak, max(values))
         scale = max(peak * 1.15, 1e-9)
     layer = pygame.Surface(rect.size, pygame.SRCALPHA)
     for series, primary in series_list:
         if len(series) < 2:
             continue
         color = (HAZARD_TOP if warn else MAGENTA) if primary else PALE
-        pts = []
+        runs, run = [], []
         n = len(series)
         for i, v in enumerate(series):
+            if v is None:
+                if len(run) >= 2:
+                    runs.append(run)
+                run = []
+                continue
             x = rect.w - 1 - (n - 1 - i) * (rect.w - 2) / (HIST_LEN - 1)
             y = rect.h - 2 - min(1.0, v / scale) * (rect.h - 4)
-            pts.append((x, y))
-        if len(pts) >= 2:
-            glow = max(3, rect.h // 18)
+            run.append((x, y))
+        if len(run) >= 2:
+            runs.append(run)
+        glow = max(3, rect.h // 18)
+        for pts in runs:
             pygame.draw.lines(layer, (*color, 70), False, pts, glow)
             pygame.draw.lines(layer, (*color, 255) if primary else (*color, 170),
                               False, pts, 2 if primary else 1)
@@ -243,6 +258,52 @@ def fmt_num(val, pattern="{:.0f}"):
     if val is None:
         return "--"
     return pattern.format(val)
+
+
+def fmt_temp(temp, peak=None):
+    """温度表示。現在値 "62C"、観測最高値があれば "62C max78" を付す。
+
+    取得できていない場合は空文字。呼び出し側で補足行から項目ごと省く
+    （センサが常に無い環境で `--C` を出し続けても情報量が無いため）。
+    """
+    if temp is None:
+        return ""
+    text = "{:.0f}C".format(temp)
+    if peak is not None and peak >= temp + 1.0:
+        text += " max{:.0f}".format(peak)
+    return text
+
+
+def join_sub(*parts):
+    """補足行の組み立て。空の項目は詰める。"""
+    return "  ".join(p for p in parts if p)
+
+
+# GPU名から落とす冗長な先頭語（"NVIDIA GeForce RTX 5060 Ti" → "RTX 5060 Ti"）
+GPU_NAME_DROP = ("nvidia", "amd", "intel", "geforce", "radeon")
+
+
+def short_gpu_name(name, limit=18):
+    """カードの補足行に収まる長さへGPU名を短縮する。
+
+    単純な切り詰めだと "NVIDIA GeForce R" のように語の途中で切れるため、
+    ベンダ名など情報量の少ない先頭語を落としてから語境界で切る。
+    """
+    words = []
+    for word in str(name or "").split():
+        for token in ("(R)", "(r)", "(TM)", "(tm)"):
+            word = word.replace(token, "")
+        if word:
+            words.append(word)
+    while words and words[0].lower() in GPU_NAME_DROP:
+        words.pop(0)
+    out = ""
+    for word in words:
+        cand = (out + " " + word).strip()
+        if out and len(cand) > limit:
+            break
+        out = cand
+    return out[:limit]
 
 
 def fmt_rate(bps, bits=True):
@@ -291,11 +352,18 @@ class Monitor:
             "gpu_power": warn_thresh(conf, "WARN_GPU_POWER_W", None),
             "net_mbps": warn_thresh(conf, "WARN_NET_MBPS", None),
         }
+        self.show_pi_temp = (conf.get("SHOW_PI_TEMP", "1").strip().lower()
+                             not in ("0", "no", "false", "off", ""))
         self.data = None
         self.recv_mono = None
         self.hist = {k: deque(maxlen=HIST_LEN) for k in
-                     ("cpu", "mem", "gpu", "vram",
+                     ("cpu", "cpu_temp", "mem", "gpu", "gpu_temp", "vram",
                       "net_dn", "net_up", "dsk_rd", "dsk_wr")}
+        # 観測期間中の最高温度。PC再起動を検知したらリセットする
+        self.peak = {"cpu_temp": None, "gpu_temp": None}
+        self._last_uptime = None
+        self._pi_temp = None
+        self._pi_temp_mono = None
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind(("0.0.0.0", self.port))
@@ -326,6 +394,21 @@ class Monitor:
         gpu = d.get("gpu") or {}
         net = d.get("net") or {}
         dsk = d.get("disk") or {}
+        # PCが再起動したら最高温度の記録を作り直す
+        uptime = d.get("uptime_s")
+        if (uptime is not None and self._last_uptime is not None
+                and uptime < self._last_uptime - 5.0):
+            self.peak = {"cpu_temp": None, "gpu_temp": None}
+        if uptime is not None:
+            self._last_uptime = uptime
+        for key, temp in (("cpu_temp", cpu.get("temp_c")),
+                          ("gpu_temp", gpu.get("temp_c"))):
+            # 未取得は None のまま積む（グラフは該当区間を描かない）
+            value = float(temp) if isinstance(temp, (int, float)) else None
+            self.hist[key].append(value)
+            if value is not None and (self.peak[key] is None
+                                      or value > self.peak[key]):
+                self.peak[key] = value
         self.hist["cpu"].append(cpu.get("util") or 0.0)
         total = mem.get("total") or 0
         self.hist["mem"].append(
@@ -345,7 +428,8 @@ class Monitor:
             return None
         return time.monotonic() - self.recv_mono
 
-    def _over(self, key, value):
+    def over(self, key, value):
+        """しきい値超過か。しきい値未設定・値未取得なら False。"""
         th = self.th[key]
         return th is not None and value is not None and value >= th
 
@@ -361,13 +445,13 @@ class Monitor:
         vram_pct = 100.0 * (gpu.get("vram_used") or 0) / vt if vt else None
         net_peak = max(net.get("down_bps") or 0, net.get("up_bps") or 0) / 1e6
         w = {
-            "cpu": self._over("cpu_util", cpu.get("util"))
-                   or self._over("cpu_temp", cpu.get("temp_c")),
-            "mem": self._over("mem_pct", mem_pct),
-            "gpu": self._over("gpu_temp", gpu.get("temp_c")),
-            "vram": self._over("vram_pct", vram_pct)
-                    or self._over("gpu_power", gpu.get("power_w")),
-            "net": self._over("net_mbps", net_peak),
+            "cpu": self.over("cpu_util", cpu.get("util"))
+                   or self.over("cpu_temp", cpu.get("temp_c")),
+            "mem": self.over("mem_pct", mem_pct),
+            "gpu": self.over("gpu_temp", gpu.get("temp_c")),
+            "vram": self.over("vram_pct", vram_pct)
+                    or self.over("gpu_power", gpu.get("power_w")),
+            "net": self.over("net_mbps", net_peak),
             "disk": False,
         }
         w["any"] = any(w.values())
@@ -380,6 +464,22 @@ class Monitor:
         if ts is None:
             return None
         return ts + (time.monotonic() - self.recv_mono)
+
+    def pi_temp(self):
+        """Pi自身のSoC温度[℃]。PI_TEMP_INTERVAL秒に1回だけsysfsを読む。"""
+        if not self.show_pi_temp:
+            return None
+        now = time.monotonic()
+        if (self._pi_temp_mono is not None
+                and now - self._pi_temp_mono < PI_TEMP_INTERVAL):
+            return self._pi_temp
+        self._pi_temp_mono = now
+        try:
+            with open(PI_TEMP_PATH) as f:
+                self._pi_temp = int(f.read().strip()) / 1000.0
+        except (OSError, ValueError):
+            self._pi_temp = None
+        return self._pi_temp
 
 
 # --- 描画 -----------------------------------------------------------------------
@@ -425,6 +525,9 @@ class Renderer:
         d = mon.data or {}
         host = str(d.get("host") or "Unknown Host")[:24]
         sub = host + "  " + fmt_uptime(d.get("uptime_s"))
+        pi_t = mon.pi_temp()
+        if pi_t is not None:
+            sub += "   Pi " + fmt_num(pi_t, "{:.0f}C")
         blit_decal(scr, sub, (rect.x + m, rect.y + int(rect.h * 0.60)),
                    small, "nickel")
 
@@ -482,7 +585,7 @@ class Renderer:
         draw_plate(scr, (rect.x + self.u // 2, rect.y + self.u // 2 + (6 if warn else 0)),
                    title, label)
 
-    def _value_row(self, rect, value, sub, warn):
+    def _value_row(self, rect, value, sub, warn, sub_scheme="nickel"):
         """カード共通: 大きな値 + 補足行。戻り値はグラフ用の残り矩形。"""
         scr = self.screen
         pad = self.u // 2
@@ -492,7 +595,7 @@ class Renderer:
         vy = rect.y + int(rect.h * 0.16)
         blit_decal(scr, value, (rect.right - pad, vy), big, scheme, align="right")
         blit_decal(scr, sub, (rect.right - pad, vy + int(big * 1.28)),
-                   small, "nickel", align="right")
+                   small, sub_scheme, align="right")
         gy = rect.y + int(rect.h * 0.56)
         return pygame.Rect(rect.x + pad, gy,
                            rect.w - pad * 2, rect.bottom - pad - gy)
@@ -501,10 +604,12 @@ class Renderer:
         util = cpu.get("util")
         temp = cpu.get("temp_c")
         freq = cpu.get("freq_mhz")
-        sub = "{}  {}".format(
+        sub = join_sub(
             fmt_num(freq / 1000.0, "{:.1f}GHz") if freq else "--GHz",
-            fmt_num(temp, "{:.0f}C"))
-        graph = self._value_row(rect, fmt_num(util, "{:.0f}%"), sub, warn)
+            fmt_temp(temp, mon.peak["cpu_temp"]))
+        graph = self._value_row(
+            rect, fmt_num(util, "{:.0f}%"), sub, warn,
+            sub_scheme="hazard" if mon.over("cpu_temp", temp) else "nickel")
         cores = cpu.get("per_core") or []
         if cores and graph.h > self.u * 3:
             strip = pygame.Rect(graph.x, graph.y, graph.w, int(graph.h * 0.22))
@@ -522,7 +627,10 @@ class Renderer:
                                  (x, strip.y, bw, strip.h))
                 pygame.draw.rect(self.screen, col,
                                  (x, strip.bottom - h, bw, h))
-        draw_graph(self.screen, graph, [(mon.hist["cpu"], True)],
+        # 利用率(%)と温度(℃)は 0-100 の同一目盛に重ねる。
+        # 主線(マゼンタ/警戒色)=利用率、副線(淡白)=温度。
+        draw_graph(self.screen, graph,
+                   [(mon.hist["cpu_temp"], False), (mon.hist["cpu"], True)],
                    fixed_max=100.0, warn=warn)
 
     def _card_mem(self, mon, rect, mem, warn):
@@ -541,10 +649,13 @@ class Renderer:
     def _card_gpu(self, mon, rect, gpu, warn):
         util = gpu.get("util")
         temp = gpu.get("temp_c")
-        name = str(gpu.get("name") or "")[:20]
-        sub = "{}  {}".format(fmt_num(temp, "{:.0f}C"), name or "--")
-        graph = self._value_row(rect, fmt_num(util, "{:.0f}%"), sub, warn)
-        draw_graph(self.screen, graph, [(mon.hist["gpu"], True)],
+        name = short_gpu_name(gpu.get("name"))
+        sub = join_sub(fmt_temp(temp, mon.peak["gpu_temp"]), name)
+        graph = self._value_row(
+            rect, fmt_num(util, "{:.0f}%"), sub, warn,
+            sub_scheme="hazard" if mon.over("gpu_temp", temp) else "nickel")
+        draw_graph(self.screen, graph,
+                   [(mon.hist["gpu_temp"], False), (mon.hist["gpu"], True)],
                    fixed_max=100.0, warn=warn)
 
     def _card_vram(self, mon, rect, gpu, warn):

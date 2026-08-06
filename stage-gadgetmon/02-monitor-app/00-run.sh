@@ -11,6 +11,10 @@ install -d -m 755 "${ROOTFS_DIR}/opt/gadgetmon/fonts"
 install -m 755 "${FILES}/opt/gadgetmon/gadgetmon.py" \
 	"${ROOTFS_DIR}/opt/gadgetmon/gadgetmon.py"
 
+# ブートパーティション経由のレンダラ更新（SSH不要の差し替え手段）
+install -m 755 "${FILES}/opt/gadgetmon/apply-boot-update.sh" \
+	"${ROOTFS_DIR}/opt/gadgetmon/apply-boot-update.sh"
+
 # フォント (PenchantManufacture, CC BY 4.0,
 #  (c) RadianN_kswg / ラジアン(柏木主税))
 install -m 644 "${FILES}/opt/gadgetmon/fonts/PenchantManufacture.otf" \

@@ -1,2 +1,4 @@
 psutil>=5.9
 nvidia-ml-py>=12.535
+# pythonnet (CPU temperature via LibreHardwareMonitorLib) is installed by
+# install-agent.ps1 so that -NoCpuTemp can skip it. See docs/temperature.md.

@@ -6,6 +6,9 @@ Wants=usb-gadget.service
 [Service]
 Type=simple
 Environment=SDL_VIDEODRIVER=kmsdrm
+# ブートパーティション(FAT)に置かれた gadgetmon.py があれば取り込む。
+# 失敗しても起動は続行する（`-` 接頭辞）。
+ExecStartPre=-/opt/gadgetmon/apply-boot-update.sh
 ExecStart=/usr/bin/python3 /opt/gadgetmon/gadgetmon.py
 Restart=always
 RestartSec=3

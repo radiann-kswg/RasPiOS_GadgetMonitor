@@ -122,30 +122,39 @@ binfmtエラー時は `sudo update-binfmts --enable`。
 
 仕組み・診断手順・ライセンスは [docs/temperature.md](docs/temperature.md) を参照。
 
-## Pi側レンダラだけを差し替える
+## Pi側レンダラ・フォントだけを差し替える
 
-イメージを焼き直さずに `gadgetmon.py` を更新する方法は2つ。
+イメージを焼き直さずに `gadgetmon.py` とフォントを更新する方法は2つ。
 
 ### A. ブートパーティション経由（SSH不要・推奨）
 
 ブートパーティションは **FAT なので Windows からそのまま見える**。ここに
-`gadgetmon.py` を置いて再起動すると、`gadgetmon.service` の `ExecStartPre`
+`gadgetmon.py` や `PenchantManufacture.otf` を置いて再起動すると、
+`gadgetmon.service` の `ExecStartPre`
 （[apply-boot-update.sh](stage-gadgetmon/02-monitor-app/files/opt/gadgetmon/apply-boot-update.sh)）
 が rootfs 側へ取り込む。SSHもキーボードも要らない。
 
 1. Piの電源を落とし、SDカードをPCに挿す（またはPiを起動したままなら次回起動時に反映）
-2. ブートパーティション（`bootfs`）へ `gadgetmon.py` をコピー
+2. ブートパーティション（`bootfs`）へ差し替えたいファイルをコピー
 3. SDカードをPiへ戻して起動
 
 | ブートパーティション上のファイル | 役割 |
 | --- | --- |
 | `gadgetmon.py` | 置くと次回起動時に `/opt/gadgetmon/gadgetmon.py` へ取り込む |
+| `PenchantManufacture.otf` | 置くと次回起動時に `/opt/gadgetmon/fonts/` へ取り込む |
 | `gadgetmon-update.log` | 取り込み結果。拒否された場合は理由（構文エラー等）も記録される |
 | `gadgetmon-rollback` | 空ファイルを置いて再起動すると直前の版（`.bak`）へ戻す |
 
-安全策として、**Pythonの構文チェックを通ったものだけ**を適用し、差し替え前の版を
-`/opt/gadgetmon/gadgetmon.py.bak` に残す。同じ内容なら何もしない。
+安全策として、**検証を通ったものだけ**を適用する（`.py` はPythonの構文チェック、
+`.otf` は FreeType が実際に開いて描画できるか）。差し替え前の版は
+`<対象>.bak` に残る。同じ内容なら何もしない。
 `gadgetmon.conf` の `BOOT_UPDATE=0` で機能ごと無効化できる。
+
+この取り込み処理には機能テストがある（要 python3 + pygame）:
+
+```bash
+bash tests/test-apply-boot-update.sh
+```
 
 > **注意:** この仕組みは「ブートパーティションに書ける ＝ Pi 上で root として
 > 任意のコードを実行できる」ことを意味する。SDカードを物理的に扱える人には
@@ -157,6 +166,13 @@ binfmtエラー時は `sudo update-binfmts --enable`。
 ```powershell
 scp -O stage-gadgetmon/02-monitor-app/files/opt/gadgetmon/gadgetmon.py gadget@10.87.0.1:/tmp/
 ssh -t gadget@10.87.0.1 "sudo install -m 755 /tmp/gadgetmon.py /opt/gadgetmon/gadgetmon.py && sudo systemctl restart gadgetmon"
+```
+
+フォントの場合:
+
+```powershell
+scp -O stage-gadgetmon/02-monitor-app/files/opt/gadgetmon/fonts/PenchantManufacture.otf gadget@10.87.0.1:/tmp/
+ssh -t gadget@10.87.0.1 "sudo install -m 644 /tmp/PenchantManufacture.otf /opt/gadgetmon/fonts/PenchantManufacture.otf && sudo systemctl restart gadgetmon"
 ```
 
 ユーザ名・パスワードは `config` の `FIRST_USER_NAME` / `FIRST_USER_PASS`
